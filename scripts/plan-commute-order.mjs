@@ -10,9 +10,10 @@
  * 「到达时还能买到什么、还能不能赶在时段切换前下单」。
  *
  * 用法：
- *   node scripts/plan-commute-order.mjs --demo          # 内置早八通勤场景
- *   node scripts/plan-commute-order.mjs --input p.json  # 读取自定义输入
- *   node scripts/plan-commute-order.mjs --demo --json   # 输出机器可读 JSON
+ *   node scripts/plan-commute-order.mjs --demo                    # 内置早八通勤场景
+ *   node scripts/plan-commute-order.mjs --input p.json            # 读取自定义输入
+ *   node scripts/plan-commute-order.mjs --demo --json             # 输出机器可读 JSON
+ *   node scripts/plan-commute-order.mjs --input p.json --advise-channel  # 自取 vs 外送决策
  */
 
 import { readFileSync } from 'node:fs';
@@ -483,6 +484,146 @@ export function renderReport(result) {
   return out.join('\n');
 }
 
+// ---------------------------------------------------------------- 渠道决策
+
+/**
+ * 渠道决策规则。
+ *
+ * 需要先说清楚一件事：在**同一门店、同一菜单、同一券**的前提下，
+ * 外送必然比自取贵，差额恰好等于配送费。所以「渠道决策」的实质不是比价，
+ * 而是把「用多少钱换不用出门 / 多少时间」这笔账算清楚，供用户判断。
+ */
+export const CHANNEL_RULES = {
+  /** 配送费占预算超过该比例即提示强烈建议自取 */
+  deliveryFeeBudgetRatioWarn: 0.2,
+  /** 到达时距时段结束不足该分钟数，视为临界，外送时效不可控 */
+  criticalWindowMinutes: 30,
+};
+
+/**
+ * 对比自取与外送两个渠道，给出建议与量化理由。
+ *
+ * 输入在 buildPlans 的基础上额外支持：
+ *   - cannotGoOut: true  → 用户无法出门，优先外送
+ *   - deliveryFee / deliveryEtaMinutes → 外送成本与时效
+ */
+export function adviseChannel(input) {
+  const pickupResult = buildPlans({ ...input, fulfillment: 'pickup' });
+  const deliveryResult = buildPlans({ ...input, fulfillment: 'delivery' });
+  const pickupBest =
+    pickupResult.plans.find((p) => p.recommended) || pickupResult.plans[0] || null;
+  const deliveryBest =
+    deliveryResult.plans.find((p) => p.recommended) || deliveryResult.plans[0] || null;
+
+  const reasons = [];
+  const budget = Number(input.budget || 0);
+
+  if (!pickupBest && !deliveryBest) {
+    return {
+      recommended: null,
+      reasons: ['自取与外送两个渠道都没有可用方案，请检查地址或放宽预算。'],
+      pickupResult,
+      deliveryResult,
+      comparison: null,
+    };
+  }
+
+  let recommended;
+  if (!deliveryBest) {
+    recommended = 'pickup';
+    reasons.push('外送渠道无可用方案（可能超出配送范围或无配送门店），只能到店自取。');
+  } else if (!pickupBest) {
+    recommended = 'delivery';
+    reasons.push('附近没有可到店取餐的门店，只能选择外送。');
+  } else {
+    const fee = Number(deliveryBest.deliveryFee || 0);
+    const feeRatio = budget > 0 ? fee / budget : 0;
+    const window = pickupResult.arrivalWindow;
+    const isCritical = window && window.minutesUntilClose <= CHANNEL_RULES.criticalWindowMinutes;
+
+    if (input.cannotGoOut) {
+      recommended = 'delivery';
+      reasons.push(
+        `你已说明无法出门，选择外送。相比自取需多付 ¥${fee.toFixed(2)} 配送费，` +
+          `但无需在 ${window ? window.minutesUntilClose : '—'} 分钟内赶到门店。`,
+      );
+    } else if (isCritical) {
+      recommended = 'pickup';
+      reasons.push(
+        `到达时距「${window.label}」时段结束仅剩 ${window.minutesUntilClose} 分钟，` +
+          '外送时效不可控，建议到店自取或提前预约。',
+      );
+    } else if (budget > 0 && feeRatio > CHANNEL_RULES.deliveryFeeBudgetRatioWarn) {
+      recommended = 'pickup';
+      reasons.push(
+        `配送费 ¥${fee.toFixed(2)} 占预算的 ${(feeRatio * 100).toFixed(0)}%，` +
+          `已超过 ${(CHANNEL_RULES.deliveryFeeBudgetRatioWarn * 100).toFixed(0)}% 的警戒线，建议自取。`,
+      );
+    } else {
+      recommended = 'pickup';
+      reasons.push(
+        `同为 ¥${pickupBest.payable.toFixed(2)} 的自取方案，外送需多付 ¥${fee.toFixed(2)} 配送费` +
+          `（+${deliveryBest.waitMinutes - pickupBest.waitMinutes} 分钟），自取更省。`,
+      );
+    }
+  }
+
+  const comparison =
+    pickupBest && deliveryBest
+      ? {
+          fee: deliveryBest.deliveryFee,
+          pickup: {
+            payable: pickupBest.payable,
+            waitMinutes: pickupBest.waitMinutes,
+            items: pickupBest.items.map((i) => i.name),
+          },
+          delivery: {
+            payable: deliveryBest.payable,
+            waitMinutes: deliveryBest.waitMinutes,
+            items: deliveryBest.items.map((i) => i.name),
+          },
+          /** 选外送需要多付的钱 */
+          deliveryPremium: Number((deliveryBest.payable - pickupBest.payable).toFixed(2)),
+          /** 选外送换来的时间差（负数表示外送更快） */
+          timeDelta: deliveryBest.waitMinutes - pickupBest.waitMinutes,
+        }
+      : null;
+
+  return { recommended, reasons, pickupResult, deliveryResult, comparison };
+}
+
+export function renderChannelAdvice(result) {
+  const out = [];
+  out.push('=== 麦麦通勤点单官 · 渠道决策 ===');
+  out.push('');
+  if (!result.recommended) {
+    for (const r of result.reasons) out.push(`  ${r}`);
+    return out.join('\n');
+  }
+  out.push(`建议渠道：${result.recommended === 'pickup' ? '到店自取' : '麦乐送外送'}`);
+  out.push('');
+  for (const r of result.reasons) out.push(`  理由：${r}`);
+
+  if (result.comparison) {
+    const c = result.comparison;
+    out.push('');
+    out.push('  对比（取各自最优方案）：');
+    out.push(
+      `    自取　实付 ¥${c.pickup.payable.toFixed(2)}　耗时约 ${c.pickup.waitMinutes} 分钟　${c.pickup.items.join(' + ')}`,
+    );
+    out.push(
+      `    外送　实付 ¥${c.delivery.payable.toFixed(2)}　耗时约 ${c.delivery.waitMinutes} 分钟　${c.delivery.items.join(' + ')}`,
+    );
+    out.push(
+      `    → 选外送需多付 ¥${c.deliveryPremium.toFixed(2)}（含配送费 ¥${Number(c.fee).toFixed(2)}），` +
+        `耗时差 ${c.timeDelta >= 0 ? '+' : ''}${c.timeDelta} 分钟`,
+    );
+  }
+  out.push('');
+  out.push('渠道建议只说明取舍，最终选择请由用户决定。');
+  return out.join('\n');
+}
+
 // ---------------------------------------------------------------- 内置演示数据
 
 export const DEMO_INPUT = {
@@ -531,11 +672,11 @@ function main(argv) {
     input = JSON.parse(readFileSync(file, 'utf8'));
   }
 
-  const result = buildPlans(input);
+  const result = args.has('--advise-channel') ? adviseChannel(input) : buildPlans(input);
   if (asJson) {
     console.log(JSON.stringify(result, null, 2));
   } else {
-    console.log(renderReport(result));
+    console.log(args.has('--advise-channel') ? renderChannelAdvice(result) : renderReport(result));
   }
 }
 

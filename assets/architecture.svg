@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" width="100%" role="img" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif">
+<title>麦麦通勤点单官 · 架构</title>
+<desc>三层架构：事实层由麦当劳 MCP 提供，决策层由本地零依赖纯函数完成，副作用层必须经用户确认后才能创建订单。</desc>
+
+<rect x="0" y="0" width="960" height="560" fill="#FFFFFF"/>
+
+<text x="40" y="46" font-size="21" font-weight="500" fill="#2C2C2A">麦麦通勤点单官 · 架构</text>
+<text x="40" y="72" font-size="13" fill="#5F5E5A">事实由 MCP 提供 · 决策由本地纯函数完成 · 副作用操作强制人工确认</text>
+
+<rect x="40" y="100" width="880" height="120" rx="16" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="60" y="126" font-size="13" font-weight="500" fill="#0C447C">事实层 · 麦当劳 MCP（https://mcp.mcd.cn，Streamable HTTP）</text>
+
+<rect x="60" y="146" width="126" height="54" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text x="123" y="166" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle">时段</text>
+<text x="123" y="184" font-size="12" fill="#185FA5" text-anchor="middle">now-time-info</text>
+
+<rect x="198" y="146" width="126" height="54" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text x="261" y="166" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle">门店</text>
+<text x="261" y="184" font-size="12" fill="#185FA5" text-anchor="middle">nearby-stores</text>
+
+<rect x="336" y="146" width="126" height="54" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text x="399" y="166" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle">菜单</text>
+<text x="399" y="184" font-size="12" fill="#185FA5" text-anchor="middle">query-meals</text>
+
+<rect x="474" y="146" width="126" height="54" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text x="537" y="166" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle">门店券</text>
+<text x="537" y="184" font-size="12" fill="#185FA5" text-anchor="middle">store-coupons</text>
+
+<rect x="612" y="146" width="126" height="54" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text x="675" y="166" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle">我的券</text>
+<text x="675" y="184" font-size="12" fill="#185FA5" text-anchor="middle">my-coupons</text>
+
+<rect x="750" y="146" width="126" height="54" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text x="813" y="166" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle">计价</text>
+<text x="813" y="184" font-size="12" fill="#185FA5" text-anchor="middle">calculate-price</text>
+
+<path d="M480 220 L480 250" fill="none" stroke="#5F5E5A" stroke-width="1.5"/>
+<path d="M474 244 L480 252 L486 244" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="496" y="240" font-size="12" fill="#5F5E5A">原始数据</text>
+
+<rect x="40" y="250" width="880" height="120" rx="16" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="60" y="276" font-size="13" font-weight="500" fill="#04342C">决策层 · 本地零依赖纯函数（离线可跑 · 53 个单元测试）</text>
+
+<rect x="60" y="296" width="260" height="54" rx="8" fill="#FFFFFF" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="190" y="316" font-size="13" font-weight="500" fill="#04342C" text-anchor="middle">时段引擎</text>
+<text x="190" y="334" font-size="12" fill="#0F6E56" text-anchor="middle">到达时刻 → 可售窗口，过滤已停售餐品</text>
+
+<rect x="340" y="296" width="260" height="54" rx="8" fill="#FFFFFF" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="470" y="316" font-size="13" font-weight="500" fill="#04342C" text-anchor="middle">券择优</text>
+<text x="470" y="334" font-size="12" fill="#0F6E56" text-anchor="middle">门槛校验 + 到期紧迫度排序</text>
+
+<rect x="620" y="296" width="260" height="54" rx="8" fill="#FFFFFF" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="750" y="316" font-size="13" font-weight="500" fill="#04342C" text-anchor="middle">四维评分</text>
+<text x="750" y="334" font-size="12" fill="#0F6E56" text-anchor="middle">价格 · 热量 · 耗时 · 券紧迫度</text>
+
+<path d="M480 370 L480 400" fill="none" stroke="#854F0B" stroke-width="1.5"/>
+<path d="M474 394 L480 402 L486 394" fill="none" stroke="#854F0B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="496" y="390" font-size="12" fill="#854F0B">最多 3 个候选方案</text>
+
+<rect x="40" y="400" width="880" height="120" rx="16" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="60" y="426" font-size="13" font-weight="500" fill="#633806">副作用层 · 未获用户确认前不得执行</text>
+
+<rect x="60" y="446" width="260" height="54" rx="8" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/>
+<text x="190" y="466" font-size="13" font-weight="500" fill="#633806" text-anchor="middle">用户确认闸门</text>
+<text x="190" y="484" font-size="12" fill="#854F0B" text-anchor="middle">展示实付金额，等待显式确认</text>
+
+<rect x="340" y="446" width="260" height="54" rx="8" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/>
+<text x="470" y="466" font-size="13" font-weight="500" fill="#633806" text-anchor="middle">create-order</text>
+<text x="470" y="484" font-size="12" fill="#854F0B" text-anchor="middle">预约下单，返回支付链接</text>
+
+<rect x="620" y="446" width="260" height="54" rx="8" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/>
+<text x="750" y="466" font-size="13" font-weight="500" fill="#633806" text-anchor="middle">query-order</text>
+<text x="750" y="484" font-size="12" fill="#854F0B" text-anchor="middle">订单状态 · 取餐柜二维码</text>
+</svg>

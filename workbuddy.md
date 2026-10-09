@@ -73,6 +73,31 @@
 据此补充了 `deliveryFee` 与 `deliveryEtaMinutes` 两个输入字段，
 使配送费进入价格轴、送达耗时替代取餐耗时，该场景从"讲故事"变为可运行。
 
+### 阶段 6 · 竞争情报驱动的定位调整
+
+报名仓库上线后，WorkBuddy 拉取了活动仓库的全部报名 Issue（当时 65 个）并做赛道聚类，
+识别出三类高度重叠的先行项目：纯时段类、纯省钱类、券资产管理类。
+
+据此把项目定位从泛「时间 × 位置」收敛为**「供餐时段 × 券有效期，双时钟对齐」**，
+在 README 中新增「为什么是两个时钟」与「与同类方案的差异」两节，明确边界。
+
+同时确认了一个关键事实：**65 个报名项目绝大多数为 0 Star，榜首仅 13 Star**。
+结论是新颖度不是瓶颈、触达才是，因此把资源投向执行完成度（测试 + 视觉 + 可验证性），
+而非重新选题。
+
+### 阶段 7 · 补齐工程完备度
+
+1. **单元测试**：新增 `tests/plan-commute-order.test.mjs`，从 43 个扩到 53 个，
+   补上渠道决策的判定优先级与溢价恒等式。
+2. **渠道决策**：新增 `adviseChannel()` 与 `--advise-channel`，
+   对比自取 / 外送的实付、耗时与溢价。
+   实现时刻意**不**假装"外送可能更便宜"——同菜单同券下外送必然贵一个配送费，
+   所以输出的是取舍的量化，而不是一个伪结论。
+3. **连接自检**：新增 `scripts/mcp-smoke.mjs`，按 MCP Streamable HTTP 协议
+   完整走一遍 `initialize → notifications/initialized → tools/list → tools/call`，
+   把「确实接通了麦当劳 MCP」变成一条可复现的命令。
+4. **架构图**：新增 `assets/architecture.svg`，呈现「事实层 / 决策层 / 副作用层」三层分离。
+
 ## 三、WorkBuddy 在本项目中的具体作用
 
 | 环节 | WorkBuddy 承担的工作 |
@@ -91,11 +116,23 @@
 
 ## 四、可复现的验证步骤
 
-任何人可用以下命令复现全部结果（无需 MCP Token）：
+任何人可用以下命令复现全部结果（**前三组无需 MCP Token**）：
 
 ```bash
+# 单元测试：53 个
+npm test
+
+# 三个场景演示
 node scripts/plan-commute-order.mjs --demo
-node scripts/coupon-deadline-rescue.mjs --demo
 node scripts/plan-commute-order.mjs --input examples/payload-boundary.json
 node scripts/plan-commute-order.mjs --input examples/payload-delivery.json
+
+# 券到期救援
+node scripts/coupon-deadline-rescue.mjs --demo
+
+# 渠道决策（自取 vs 外送）
+node scripts/plan-commute-order.mjs --input examples/payload-delivery.json --advise-channel
+
+# MCP 连通性自检（需 Token）
+MCD_MCP_TOKEN=xxx node scripts/mcp-smoke.mjs
 ```

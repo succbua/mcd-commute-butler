@@ -13,6 +13,7 @@ import {
   MEAL_WINDOWS,
   URGENCY_TIERS,
   DEFAULT_WEIGHTS,
+  CHANNEL_RULES,
   toEpoch,
   minuteOfDay,
   formatBeijing,
@@ -23,6 +24,8 @@ import {
   effectiveDiscount,
   pickBestCoupon,
   buildPlans,
+  adviseChannel,
+  renderChannelAdvice,
   DEMO_INPUT,
 } from '../scripts/plan-commute-order.mjs';
 
@@ -322,6 +325,91 @@ test('buildRescueList: 积分账户与到期天数被正确解析', () => {
 test('buildRescueList: 空券包不报错', () => {
   const result = buildRescueList({ now: '2026-10-10T00:00:00+08:00', coupons: [] });
   assert.equal(result.rows.length, 0);
+});
+
+// ---------------------------------------------------------------- 渠道决策
+
+const DELIVERY_BASE = {
+  ...DEMO_INPUT,
+  budget: 100,
+  deliveryFee: 9,
+  deliveryEtaMinutes: 30,
+};
+
+test('adviseChannel: 无特殊约束时推荐自取（外送必然多付配送费）', () => {
+  const result = adviseChannel(DELIVERY_BASE);
+  assert.equal(result.recommended, 'pickup');
+  assert.ok(result.reasons.some((r) => r.includes('配送费')));
+});
+
+test('adviseChannel: 选外送的溢价恰好等于配送费', () => {
+  const result = adviseChannel(DELIVERY_BASE);
+  assert.equal(result.comparison.deliveryPremium, 9);
+  assert.equal(result.comparison.fee, 9);
+});
+
+test('adviseChannel: 配送费占预算超 20% 时给出警戒理由', () => {
+  // 预算 40，配送费 9 → 22.5%
+  const result = adviseChannel({ ...DEMO_INPUT, budget: 40, deliveryFee: 9, deliveryEtaMinutes: 30 });
+  assert.equal(result.recommended, 'pickup');
+  assert.ok(result.reasons.some((r) => r.includes('警戒线')));
+});
+
+test('adviseChannel: 无法出门时推荐外送', () => {
+  const result = adviseChannel({ ...DELIVERY_BASE, cannotGoOut: true });
+  assert.equal(result.recommended, 'delivery');
+  assert.ok(result.reasons.some((r) => r.includes('无法出门')));
+});
+
+test('adviseChannel: 到达时段临界时推荐自取，避免外送时效不可控', () => {
+  // 08:20 出发 + 120 分钟 → 10:20 到达，距早餐结束仅 10 分钟
+  const result = adviseChannel({ ...DELIVERY_BASE, travelMinutes: 120, deliveryFee: 5 });
+  assert.equal(result.recommended, 'pickup');
+  assert.ok(result.reasons.some((r) => r.includes('外送时效不可控')));
+});
+
+test('adviseChannel: 无可用方案时返回 null 并说明', () => {
+  const result = adviseChannel({
+    ...DELIVERY_BASE,
+    meals: [{ code: 'Z', name: '正餐专属', category: '主食', price: 20, calories: 300, prepMinutes: 3, windows: ['dinner'] }],
+  });
+  assert.equal(result.recommended, null);
+  assert.equal(result.comparison, null);
+  assert.ok(result.reasons.length > 0);
+});
+
+test('adviseChannel: cannotGoOut 优先于配送费警戒线', () => {
+  // 配送费占预算 22.5%（超警戒线），但用户无法出门 → 仍应推荐外送
+  const result = adviseChannel({
+    ...DEMO_INPUT,
+    budget: 40,
+    deliveryFee: 9,
+    deliveryEtaMinutes: 30,
+    cannotGoOut: true,
+  });
+  assert.equal(result.recommended, 'delivery');
+});
+
+test('adviseChannel: 渲染结果包含渠道对比与溢价说明', () => {
+  const text = renderChannelAdvice(adviseChannel(DELIVERY_BASE));
+  assert.ok(text.includes('建议渠道：到店自取'));
+  assert.ok(text.includes('对比'));
+  assert.ok(text.includes('配送费'));
+});
+
+test('adviseChannel: 渲染无方案结果时不抛异常', () => {
+  const text = renderChannelAdvice(
+    adviseChannel({
+      ...DELIVERY_BASE,
+      meals: [{ code: 'Z', name: '正餐专属', category: '主食', price: 20, calories: 300, prepMinutes: 3, windows: ['dinner'] }],
+    }),
+  );
+  assert.ok(text.includes('渠道决策'));
+});
+
+test('CHANNEL_RULES: 警戒线与临界值符合设计预期', () => {
+  assert.equal(CHANNEL_RULES.deliveryFeeBudgetRatioWarn, 0.2);
+  assert.equal(CHANNEL_RULES.criticalWindowMinutes, 30);
 });
 
 // ---------------------------------------------------------------- 常量一致性
