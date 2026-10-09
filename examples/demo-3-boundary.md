@@ -13,7 +13,7 @@
 node scripts/plan-commute-order.mjs --input examples/payload-boundary.json
 ```
 
-## 真实输出
+## 脚本真实运行输出
 
 ```
 === 麦麦通勤点单官 · 通勤点单方案 ===
