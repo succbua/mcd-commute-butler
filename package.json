@@ -15,6 +15,7 @@
     "node": ">=18"
   },
   "scripts": {
+    "test": "node --test tests/plan-commute-order.test.mjs",
     "demo": "node scripts/plan-commute-order.mjs --demo",
     "demo:coupon": "node scripts/coupon-deadline-rescue.mjs --demo",
     "demo:json": "node scripts/plan-commute-order.mjs --demo --json"
