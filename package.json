@@ -1,0 +1,22 @@
+{
+  "name": "mcd-commute-butler",
+  "version": "1.0.0",
+  "description": "通勤场景的麦当劳点单编排 Skill —— 基于麦当劳 MCP，按到达时段过滤餐品、按到期紧迫度调度优惠券，输出可直接执行的预约订单方案",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "workbuddy",
+    "skill",
+    "mcdonalds",
+    "commute"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "demo": "node scripts/plan-commute-order.mjs --demo",
+    "demo:coupon": "node scripts/coupon-deadline-rescue.mjs --demo",
+    "demo:json": "node scripts/plan-commute-order.mjs --demo --json"
+  }
+}

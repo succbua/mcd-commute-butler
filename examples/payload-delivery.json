@@ -1,0 +1,105 @@
+{
+  "now": "2026-10-12T11:40:00+08:00",
+  "departTime": "2026-10-12T11:40:00+08:00",
+  "travelMinutes": 0,
+  "budget": 50,
+  "maxCalories": 1000,
+  "preference": "",
+  "fulfillment": "delivery",
+  "queueBaseMinutes": 4,
+  "deliveryFee": 9,
+  "deliveryEtaMinutes": 30,
+  "stores": [
+    {
+      "storeCode": "SH-PD-002",
+      "name": "陆家嘴环路店",
+      "distanceMeters": 540,
+      "open": true
+    }
+  ],
+  "meals": [
+    {
+      "code": "D001",
+      "name": "双层吉士汉堡",
+      "category": "主食",
+      "price": 22,
+      "calories": 450,
+      "prepMinutes": 6,
+      "tags": ["正餐"],
+      "windows": ["lunch", "dinner"]
+    },
+    {
+      "code": "D002",
+      "name": "麦辣鸡腿堡",
+      "category": "主食",
+      "price": 21,
+      "calories": 520,
+      "prepMinutes": 6,
+      "tags": ["正餐", "辣"],
+      "windows": ["lunch", "dinner"]
+    },
+    {
+      "code": "D003",
+      "name": "中份薯条",
+      "category": "小食",
+      "price": 13,
+      "calories": 340,
+      "prepMinutes": 3,
+      "tags": ["正餐"],
+      "windows": ["lunch", "dinner"]
+    },
+    {
+      "code": "D004",
+      "name": "玉米杯",
+      "category": "小食",
+      "price": 11,
+      "calories": 90,
+      "prepMinutes": 2,
+      "tags": ["正餐"],
+      "windows": ["lunch", "dinner"]
+    },
+    {
+      "code": "D005",
+      "name": "香浓拿铁",
+      "category": "饮品",
+      "price": 15,
+      "calories": 130,
+      "prepMinutes": 2,
+      "tags": ["咖啡"],
+      "windows": ["breakfast", "lunch", "afternoon"]
+    },
+    {
+      "code": "D006",
+      "name": "美式咖啡",
+      "category": "饮品",
+      "price": 12,
+      "calories": 10,
+      "prepMinutes": 2,
+      "tags": ["咖啡"],
+      "windows": ["breakfast", "lunch", "afternoon"]
+    }
+  ],
+  "coupons": [
+    {
+      "couponId": "C-001",
+      "title": "通勤专享 满20减12",
+      "discount": 12,
+      "minSpend": 20,
+      "expireAt": "2026-10-13T23:59:00+08:00"
+    },
+    {
+      "couponId": "C-002",
+      "title": "饮品立减3元",
+      "discount": 3,
+      "minSpend": 10,
+      "expireAt": "2026-10-22T23:59:00+08:00"
+    },
+    {
+      "couponId": "C-003",
+      "title": "满30减8",
+      "discount": 8,
+      "minSpend": 30,
+      "expireAt": "2026-10-17T23:59:00+08:00"
+    }
+  ]
+}

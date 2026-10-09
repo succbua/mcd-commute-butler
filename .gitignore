@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+package-lock.json
+
+# 本地凭据 —— 绝对不要提交
+.env
+.env.*
+!.env.example
+*.token
+*_token.txt
+mcp-config.local.json
+
+# 本地真实数据（可能含个人信息）
+payload.json
+wallet.json
+orders.json
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

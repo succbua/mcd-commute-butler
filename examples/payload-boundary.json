@@ -1,0 +1,113 @@
+{
+  "now": "2026-10-10T09:50:00+08:00",
+  "departTime": "2026-10-10T09:55:00+08:00",
+  "travelMinutes": 40,
+  "budget": 40,
+  "maxCalories": 900,
+  "preference": "",
+  "fulfillment": "pickup",
+  "queueBaseMinutes": 4,
+  "stores": [
+    {
+      "storeCode": "SH-PD-001",
+      "name": "世纪大道店",
+      "distanceMeters": 260,
+      "open": true
+    }
+  ],
+  "meals": [
+    {
+      "code": "M001",
+      "name": "香浓拿铁",
+      "category": "饮品",
+      "price": 15,
+      "calories": 130,
+      "prepMinutes": 2,
+      "tags": ["咖啡", "热饮"],
+      "windows": ["breakfast", "lunch", "afternoon"]
+    },
+    {
+      "code": "M002",
+      "name": "美式咖啡",
+      "category": "饮品",
+      "price": 12,
+      "calories": 10,
+      "prepMinutes": 2,
+      "tags": ["咖啡"],
+      "windows": ["breakfast", "lunch", "afternoon"]
+    },
+    {
+      "code": "M003",
+      "name": "咖啡可颂套餐",
+      "category": "套餐",
+      "price": 19.5,
+      "calories": 320,
+      "prepMinutes": 4,
+      "tags": ["咖啡", "早餐", "套餐"],
+      "windows": ["breakfast"]
+    },
+    {
+      "code": "M004",
+      "name": "早安咖啡组合",
+      "category": "套餐",
+      "price": 22,
+      "calories": 380,
+      "prepMinutes": 4,
+      "tags": ["咖啡", "早餐", "套餐"],
+      "windows": ["breakfast"]
+    },
+    {
+      "code": "M005",
+      "name": "原味豆浆",
+      "category": "饮品",
+      "price": 9,
+      "calories": 110,
+      "prepMinutes": 1,
+      "tags": ["早餐"],
+      "windows": ["breakfast"]
+    },
+    {
+      "code": "M006",
+      "name": "双层吉士汉堡",
+      "category": "主食",
+      "price": 22,
+      "calories": 450,
+      "prepMinutes": 6,
+      "tags": ["正餐"],
+      "windows": ["lunch", "dinner"]
+    },
+    {
+      "code": "M007",
+      "name": "麦辣鸡腿堡",
+      "category": "主食",
+      "price": 21,
+      "calories": 520,
+      "prepMinutes": 6,
+      "tags": ["正餐", "辣"],
+      "windows": ["lunch", "dinner"]
+    }
+  ],
+  "coupons": [
+    {
+      "couponId": "C-001",
+      "title": "通勤专享 满20减12",
+      "discount": 12,
+      "minSpend": 20,
+      "expireAt": "2026-10-11T23:59:00+08:00"
+    },
+    {
+      "couponId": "C-002",
+      "title": "饮品立减3元",
+      "discount": 3,
+      "minSpend": 10,
+      "expireAt": "2026-10-20T23:59:00+08:00"
+    },
+    {
+      "couponId": "C-003",
+      "title": "满30减8",
+      "discount": 8,
+      "minSpend": 30,
+      "expireAt": "2026-10-15T23:59:00+08:00"
+    }
+  ]
+}
