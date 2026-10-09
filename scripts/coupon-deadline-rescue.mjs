@@ -48,16 +48,32 @@ export function buildRescueList(wallet) {
   const rows = coupons.map((coupon) => {
     const tier = tierOf(coupon, nowEpoch);
     const minSpend = Number(coupon.minSpend || 0);
-    const value = coupon.discount != null
-      ? Number(coupon.discount)
-      : effectiveDiscount(coupon, minSpend || Number(coupon.discountCap || 0));
+
+    // 兑换券（免费兑换指定商品）没有固定抵扣额，需结合具体商品才能估值。
+    // 这里不臆造金额，标记为 voucher 并列出适用商品。
+    const codes =
+      coupon.applicableProductCodes ||
+      (coupon.products || []).map((p) => p?.productCode).filter(Boolean);
+    const isVoucher = Array.isArray(codes) && codes.length > 0;
+
+    const productNames =
+      coupon.productNames || (coupon.products || []).map((p) => p?.productName).filter(Boolean);
+
+    const value = isVoucher
+      ? null
+      : coupon.discount != null
+        ? Number(coupon.discount)
+        : effectiveDiscount(coupon, minSpend || Number(coupon.discountCap || 0));
+
     return {
       coupon,
       tier,
       minSpend,
       value,
-      /** 单位门槛价值：衡量「凑单效率」，数值越高越划算 */
-      efficiency: minSpend > 0 ? Number((value / minSpend).toFixed(3)) : 1,
+      isVoucher,
+      productNames,
+      /** 单位门槛价值：衡量「凑单效率」，数值越高越划算；兑换券无门槛概念 */
+      efficiency: isVoucher || minSpend <= 0 ? 1 : Number((value / minSpend).toFixed(3)),
     };
   });
 
@@ -66,7 +82,9 @@ export function buildRescueList(wallet) {
     const ta = tierOrder.get(a.tier.key) ?? 99;
     const tb = tierOrder.get(b.tier.key) ?? 99;
     if (ta !== tb) return ta - tb;
-    if (b.value !== a.value) return b.value - a.value;
+    const va = a.value ?? -1;
+    const vb = b.value ?? -1;
+    if (vb !== va) return vb - va;
     return a.tier.days - b.tier.days;
   });
 
@@ -104,10 +122,11 @@ export function renderRescue(result) {
     out.push(`【${tier.label}】${list.length} 张`);
     for (const row of list) {
       const days = Number.isFinite(row.tier.days) ? `剩余 ${row.tier.days.toFixed(1)} 天` : '无到期日';
-      out.push(
-        `  · ${row.coupon.title}　抵扣 ¥${row.value.toFixed(2)}　门槛 ¥${row.minSpend.toFixed(2)}　${days}`,
-      );
-      if (row.efficiency < 0.2 && row.minSpend > 0) {
+      const valueText = row.isVoucher
+        ? `兑换券（适用：${(row.productNames || []).join('、') || '指定商品'}）`
+        : `抵扣 ¥${Number(row.value).toFixed(2)}　门槛 ¥${row.minSpend.toFixed(2)}`;
+      out.push(`  · ${row.coupon.title}　${valueText}　${days}`);
+      if (!row.isVoucher && row.efficiency < 0.2 && row.minSpend > 0) {
         out.push('      注意：抵扣额相对门槛偏低，不建议为用券而凑单。');
       }
     }

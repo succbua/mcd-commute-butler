@@ -26,6 +26,13 @@ import {
   buildPlans,
   adviseChannel,
   renderChannelAdvice,
+  parseReservationOptions,
+  resolveStoreWindows,
+  nextWindowAfter,
+  parseCouponPeriod,
+  normalizeCoupon,
+  deriveVoucherCategory,
+  findVoucherHints,
   DEMO_INPUT,
 } from '../scripts/plan-commute-order.mjs';
 
@@ -410,6 +417,319 @@ test('adviseChannel: 渲染无方案结果时不抛异常', () => {
 test('CHANNEL_RULES: 警戒线与临界值符合设计预期', () => {
   assert.equal(CHANNEL_RULES.deliveryFeeBudgetRatioWarn, 0.2);
   assert.equal(CHANNEL_RULES.criticalWindowMinutes, 30);
+});
+
+// ---------------------------------------------------------------- 门店真实时段
+
+/** 实测自麦当劳 MCP `query-nearby-stores` 的真实返回文本 */
+const REAL_OPTION_TEXT =
+  '早餐(07:14至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)';
+
+test('parseReservationOptions: 解析实测门店时段文本', () => {
+  const windows = parseReservationOptions(REAL_OPTION_TEXT);
+  assert.equal(windows.length, 4);
+  assert.deepEqual(
+    windows.map((w) => [w.key, w.start, w.end]),
+    [
+      ['breakfast', '07:14', '10:15'],
+      ['lunch', '10:44', '14:15'],
+      ['afternoon', '14:44', '16:45'],
+      ['dinner', '17:14', '21:45'],
+    ],
+  );
+  assert.ok(windows.every((w) => w.source === 'store'));
+});
+
+test('parseReservationOptions: 空输入与非法文本返回空数组', () => {
+  assert.deepEqual(parseReservationOptions(''), []);
+  assert.deepEqual(parseReservationOptions(null), []);
+  assert.deepEqual(parseReservationOptions('没有任何时段信息'), []);
+});
+
+test('parseReservationOptions: 支持半角括号与「至」以外的空格变体', () => {
+  const windows = parseReservationOptions('早餐(06:44 至 10:15)');
+  assert.equal(windows.length, 1);
+  assert.equal(windows[0].start, '06:44');
+});
+
+test('resolveStoreWindows: 按日期选中对应条目', () => {
+  const store = {
+    reservationTimeOptions: [
+      { date: '2026-10-09', today: true, reservationOptionText: '夜市(17:14至21:45)' },
+      { date: '2026-10-10', today: false, reservationOptionText: REAL_OPTION_TEXT },
+    ],
+  };
+  const windows = resolveStoreWindows(store, '2026-10-10');
+  assert.equal(windows.length, 4);
+  assert.equal(windows[0].start, '07:14');
+});
+
+test('resolveStoreWindows: 日期不存在时回退到 today 条目', () => {
+  const store = {
+    reservationTimeOptions: [
+      { date: '2026-10-09', today: true, reservationOptionText: '夜市(17:14至21:45)' },
+      { date: '2026-10-10', today: false, reservationOptionText: REAL_OPTION_TEXT },
+    ],
+  };
+  const windows = resolveStoreWindows(store, '2030-01-01');
+  assert.equal(windows.length, 1);
+  assert.equal(windows[0].key, 'dinner');
+});
+
+test('resolveStoreWindows: 门店无时段数据时返回 null', () => {
+  assert.equal(resolveStoreWindows({}, '2026-10-10'), null);
+  assert.equal(resolveStoreWindows(null, '2026-10-10'), null);
+  assert.equal(resolveStoreWindows({ reservationTimeOptions: [] }, '2026-10-10'), null);
+});
+
+test('windowAt: 传入门店真实时段时按真实边界判定，而非估算表', () => {
+  const windows = parseReservationOptions(REAL_OPTION_TEXT);
+  // 09:00 在真实早餐时段内，距 10:15 结束还有 75 分钟
+  const w = windowAt(toEpoch('2026-10-10T09:00:00+08:00'), windows);
+  assert.equal(w.key, 'breakfast');
+  assert.equal(w.end, '10:15');
+  assert.equal(w.minutesUntilClose, 75);
+  assert.equal(w.fromStore, true);
+  // 估算表下 10:29 仍算早餐，真实数据下 10:15 就已结束
+  assert.equal(windowAt(toEpoch('2026-10-10T10:29:00+08:00'), windows), null);
+});
+
+test('nextWindowAfter: 落在空档期时给出下一个时段', () => {
+  const windows = parseReservationOptions(REAL_OPTION_TEXT);
+  // 10:20 处于 早餐(→10:15) 与 午餐(10:44→) 之间的空档
+  const next = nextWindowAfter(toEpoch('2026-10-10T10:20:00+08:00'), windows);
+  assert.equal(next.key, 'lunch');
+  assert.equal(next.start, '10:44');
+  assert.equal(next.minutesUntil, 24);
+});
+
+test('buildPlans: 门店带真实时段时优先采用，并标注来源', () => {
+  const result = buildPlans({
+    ...DEMO_INPUT,
+    stores: [
+      {
+        storeCode: '1450253',
+        name: '麦当劳上海世纪汇广场餐厅',
+        distanceMeters: 72,
+        open: true,
+        reservationTimeOptions: [
+          { date: '2026-10-10', today: false, reservationOptionText: REAL_OPTION_TEXT },
+        ],
+      },
+    ],
+  });
+  assert.equal(result.windowsSource, 'store');
+  assert.equal(result.arrivalWindow.end, '10:15');
+  assert.ok(result.notes.some((n) => n.includes('真实可预约时段')));
+});
+
+test('buildPlans: 无门店时段数据时回退到估算表', () => {
+  const result = buildPlans(DEMO_INPUT);
+  assert.equal(result.windowsSource, 'fallback');
+  assert.equal(result.arrivalWindow.end, '10:30');
+});
+
+test('buildPlans: 落到时段空档期时提示下一个时段', () => {
+  const result = buildPlans({
+    ...DEMO_INPUT,
+    departTime: '2026-10-10T08:20:00+08:00',
+    travelMinutes: 120, // 到达 10:20，落在真实空档期
+    stores: [
+      {
+        storeCode: '1450253',
+        name: '麦当劳上海世纪汇广场餐厅',
+        distanceMeters: 72,
+        open: true,
+        reservationTimeOptions: [
+          { date: '2026-10-10', today: false, reservationOptionText: REAL_OPTION_TEXT },
+        ],
+      },
+    ],
+  });
+  assert.equal(result.arrivalWindow, null);
+  assert.ok(result.notes.some((n) => n.includes('空档期') && n.includes('10:44')));
+});
+
+// ---------------------------------------------------------------- 真实券结构
+
+/** 实测自麦当劳 MCP `query-store-coupons` 的真实返回 */
+const REAL_COUPON = {
+  title: '麦旋风任选',
+  couponId: '71F939A874735C2495517B8B24323CFB',
+  couponCode: 'MCD6F2Y2090L00Y190V76',
+  tradeDateTime: '2026-10-05 10:30:00-2026-10-09 23:59:59',
+  products: [{ productCode: '9900014239', productName: '麦旋风任选1' }],
+};
+
+test('parseCouponPeriod: 解析实测 tradeDateTime', () => {
+  const p = parseCouponPeriod(REAL_COUPON.tradeDateTime);
+  assert.equal(p.start, '2026-10-05T10:30:00+08:00');
+  assert.equal(p.end, '2026-10-09T23:59:59+08:00');
+  assert.equal(p.expireAt, '2026-10-09T23:59:59+08:00');
+});
+
+test('parseCouponPeriod: 非法输入返回空值', () => {
+  for (const bad of [null, '', '2026-10-09']) {
+    assert.equal(parseCouponPeriod(bad).expireAt, null);
+  }
+});
+
+test('normalizeCoupon: 兑换券被识别并提取适用商品', () => {
+  const c = normalizeCoupon(REAL_COUPON);
+  assert.equal(c.type, 'voucher');
+  assert.deepEqual(c.applicableProductCodes, ['9900014239']);
+  assert.equal(c.expireAt, '2026-10-09T23:59:59+08:00');
+  assert.equal(c.couponCode, 'MCD6F2Y2090L00Y190V76');
+});
+
+test('normalizeCoupon: 满减券保持 amount 类型', () => {
+  const c = normalizeCoupon({ couponId: 'x', title: '满20减5', discount: 5, minSpend: 20 });
+  assert.equal(c.type, 'amount');
+  assert.equal(c.discount, 5);
+  assert.equal(c.applicableProductCodes, undefined);
+});
+
+test('effectiveDiscount: 兑换券的抵扣额等于命中商品售价', () => {
+  const c = normalizeCoupon(REAL_COUPON);
+  const items = [
+    { code: '9900014239', name: '麦旋风任选1', price: 13.5 },
+    { code: '3010', name: '雪碧', price: 9.5 },
+  ];
+  assert.equal(effectiveDiscount(c, 23, items), 13.5);
+});
+
+test('effectiveDiscount: 兑换券在组合中没有适用商品时不抵扣', () => {
+  const c = normalizeCoupon(REAL_COUPON);
+  assert.equal(effectiveDiscount(c, 20, [{ code: '3010', price: 9.5 }]), 0);
+});
+
+test('effectiveDiscount: 原始券对象（未归一化）也能识别兑换券', () => {
+  assert.equal(
+    effectiveDiscount(REAL_COUPON, 23, [{ code: '9900014239', price: 13.5 }]),
+    13.5,
+  );
+});
+
+test('pickBestCoupon: 兑换券与满减券同场竞争时取应付更低者', () => {
+  const now = toEpoch('2026-10-09T18:00:00+08:00');
+  const items = [
+    { code: '9900014239', name: '麦旋风任选1', price: 13.5 },
+    { code: '3010', name: '雪碧', price: 9.5 },
+  ];
+  const best = pickBestCoupon(
+    [REAL_COUPON, { couponId: 'a', title: '满20减5', discount: 5, minSpend: 20, expireAt: '2026-10-20T00:00:00+08:00' }],
+    23,
+    now,
+    items,
+  );
+  assert.equal(best.coupon.couponId, REAL_COUPON.couponId);
+  assert.equal(best.discount, 13.5);
+});
+
+test('buildPlans: 真实兑换券能生成方案并带出到期紧迫度', () => {
+  const result = buildPlans({
+    ...DEMO_INPUT,
+    now: '2026-10-09T18:00:00+08:00',
+    departTime: '2026-10-09T18:00:00+08:00',
+    travelMinutes: 0,
+    budget: 60,
+    maxCalories: 2000,
+    preference: '',
+    meals: [
+      { code: '9900014239', name: '麦旋风任选1', category: '甜品', price: 13.5, calories: 300, prepMinutes: 2, windows: ['dinner'] },
+      { code: '3010', name: '雪碧', category: '饮品', price: 9.5, calories: 130, prepMinutes: 1, windows: ['dinner'] },
+    ],
+    coupons: [normalizeCoupon(REAL_COUPON)],
+  });
+  const withCoupon = result.plans.filter((p) => p.discount > 0);
+  assert.ok(withCoupon.length > 0, '应至少有一个方案用上了兑换券');
+  assert.ok(withCoupon.every((p) => p.couponUrgency.tier === 'critical'));
+});
+
+// ---------------------------------------------------------------- 兑换券品类提示
+
+test('deriveVoucherCategory: 从「任选N」商品名推导品类', () => {
+  assert.equal(deriveVoucherCategory(['麦旋风任选1']), '麦旋风');
+  assert.equal(deriveVoucherCategory(['薯薯任选']), '薯薯');
+  assert.equal(deriveVoucherCategory(['纯商品名']), '纯商品名');
+  assert.equal(deriveVoucherCategory([]), null);
+  assert.equal(deriveVoucherCategory(null), null);
+});
+
+test('normalizeCoupon: 兑换券带上品类提示字段', () => {
+  const c = normalizeCoupon(REAL_COUPON);
+  assert.equal(c.voucherCategory, '麦旋风');
+  assert.deepEqual(c.productNames, ['麦旋风任选1']);
+});
+
+test('findVoucherHints: 编码未命中但品类名匹配时给出候选', () => {
+  const coupons = [
+    normalizeCoupon({
+      title: '麦旋风任选',
+      couponId: 'v1',
+      tradeDateTime: '2026-10-05 10:30:00-2026-10-09 23:59:59',
+      products: [{ productCode: '9900014239', productName: '麦旋风任选1' }],
+    }),
+  ];
+  const items = [
+    { code: '9900008754', name: '经典麦旋风', price: 15.5 },
+    { code: '3010', name: '雪碧', price: 9.5 },
+  ];
+  const hints = findVoucherHints(coupons, items);
+  assert.equal(hints.length, 1);
+  assert.equal(hints[0].category, '麦旋风');
+  assert.deepEqual(hints[0].candidates, ['经典麦旋风']);
+});
+
+test('findVoucherHints: 编码已精确命中时不再提示', () => {
+  const coupons = [normalizeCoupon(REAL_COUPON)];
+  const items = [{ code: '9900014239', name: '麦旋风任选1', price: 13.5 }];
+  assert.deepEqual(findVoucherHints(coupons, items), []);
+});
+
+test('findVoucherHints: 品类无匹配商品时不提示', () => {
+  const coupons = [normalizeCoupon(REAL_COUPON)];
+  assert.deepEqual(findVoucherHints(coupons, [{ code: 'x', name: '雪碧', price: 9.5 }]), []);
+});
+
+test('buildPlans: 品类任选券只提示不抵扣', () => {
+  const result = buildPlans({
+    ...DEMO_INPUT,
+    now: '2026-10-09T18:00:00+08:00',
+    departTime: '2026-10-09T18:00:00+08:00',
+    travelMinutes: 0,
+    preference: '',
+    budget: 60,
+    maxCalories: 2000,
+    meals: [
+      { code: '9900008754', name: '经典麦旋风', category: '甜品', price: 15.5, calories: 266, prepMinutes: 2 },
+      { code: '3010', name: '雪碧', category: '饮品', price: 9.5, calories: 130, prepMinutes: 1 },
+    ],
+    coupons: [normalizeCoupon(REAL_COUPON)],
+  });
+  assert.ok(result.notes.some((n) => n.includes('品类任选券') && n.includes('经典麦旋风')));
+  assert.ok(result.plans.every((p) => p.discount === 0), '未确认的品类券不得自动抵扣');
+});
+
+// ---------------------------------------------------------------- 类别硬约束
+
+test('buildPlans: requireCategory 保证每个方案都含指定类别', () => {
+  const result = buildPlans({ ...DEMO_INPUT, preference: '', requireCategory: '套餐' });
+  assert.ok(result.plans.length > 0);
+  for (const p of result.plans) {
+    assert.ok(p.items.some((i) => i.category === '套餐'), '每个方案都应含套餐');
+  }
+});
+
+test('buildPlans: 无方案满足类别约束时返回空并说明', () => {
+  const result = buildPlans({ ...DEMO_INPUT, preference: '', requireCategory: '不存在的类别' });
+  assert.equal(result.plans.length, 0);
+  assert.ok(result.notes.some((n) => n.includes('不存在的类别')));
+});
+
+test('buildPlans: 不加约束时允许出现纯零食方案（对照）', () => {
+  const withOut = buildPlans({ ...DEMO_INPUT, preference: '' });
+  assert.ok(withOut.plans.length > 0);
 });
 
 // ---------------------------------------------------------------- 常量一致性

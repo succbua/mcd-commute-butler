@@ -119,21 +119,87 @@ async function main() {
   const list = await rpc('tools/list', {});
   const tools = list?.result?.tools ?? [];
   console.log(`可用工具数：${tools.length}`);
+
+  const showSchemas = args.includes('--schemas');
+  const filterIdx = args.indexOf('--only');
+  const only = filterIdx !== -1 ? args[filterIdx + 1] : null;
+
   for (const t of tools) {
+    if (only && !t.name.includes(only)) continue;
     console.log(`  · ${t.name}`);
+    if (showSchemas) {
+      const schema = t.inputSchema ?? {};
+      const props = schema.properties ?? {};
+      const required = new Set(schema.required ?? []);
+      const names = Object.keys(props);
+      if (!names.length) {
+        console.log('      (无入参)');
+      } else {
+        for (const name of names) {
+          const p = props[name] ?? {};
+          const flag = required.has(name) ? '必填' : '可选';
+          const type = p.type ?? 'any';
+          const desc = (p.description ?? '').replace(/\s+/g, ' ').slice(0, 70);
+          console.log(`      ${name}  [${type}] ${flag}  ${desc}`);
+        }
+      }
+    }
   }
 
   line('4/4 真实调用');
   const target = toolToCall || 'now-time-info';
+  let callArgs = {};
+  const argsIdx = args.indexOf('--args');
+  if (argsIdx !== -1) {
+    const raw = args[argsIdx + 1];
+    if (!raw) {
+      console.error('用法：--args \'{"address":"..."}\'');
+      process.exit(2);
+    }
+    try {
+      callArgs = JSON.parse(raw);
+    } catch {
+      console.error('--args 必须是合法 JSON');
+      process.exit(2);
+    }
+  }
+
   if (!tools.some((t) => t.name === target)) {
     console.log(`跳过：服务端未暴露工具 "${target}"`);
   } else {
     console.log(`调用工具：${target}`);
-    const called = await rpc('tools/call', { name: target, arguments: {} });
+    console.log(`入参：${JSON.stringify(callArgs)}`);
+    const called = await rpc('tools/call', { name: target, arguments: callArgs });
     const content = called?.result?.content ?? [];
     const textParts = content.filter((c) => c.type === 'text').map((c) => c.text);
+    let text = textParts.length ? textParts.join('\n') : JSON.stringify(called?.result ?? {}, null, 2);
+
+    // 麦当劳 MCP 的返回文本通常包含「字段说明 + 原始响应」两段。
+    // 默认只展示原始响应，避免字段说明淹没真正的数据；加 --raw 可看全文。
+    if (!args.includes('--raw')) {
+      const marker = text.indexOf('## Original Response');
+      if (marker !== -1) {
+        text = text.slice(marker + '## Original Response'.length).trim();
+      }
+      // 去掉尾部的模型提示语
+      const tail = text.indexOf('## 展示结果时');
+      if (tail !== -1) text = text.slice(0, tail).trim();
+    }
+
     console.log('返回内容：');
-    console.log(textParts.length ? textParts.join('\n').slice(0, 1500) : JSON.stringify(called?.result ?? {}, null, 2).slice(0, 1500));
+    console.log(text.slice(0, 4000));
+
+    const outIdx = args.indexOf('--out');
+    if (outIdx !== -1) {
+      const outPath = args[outIdx + 1];
+      if (!outPath) {
+        console.error('用法：--out <path.json>');
+        process.exit(2);
+      }
+      const { writeFileSync } = await import('node:fs');
+      writeFileSync(outPath, text, 'utf8');
+      console.log(`\n完整响应已写入：${outPath}`);
+    }
   }
 
   line('自检结论');

@@ -38,6 +38,36 @@
 
 ---
 
+## 已通过真实 MCP 验证
+
+本项目对麦当劳 MCP Server 做过真实调用，结论已回写进代码。完整记录见
+[`docs/real-mcp-verification.md`](./docs/real-mcp-verification.md)。
+
+| 项 | 实测结果 |
+|---|---|
+| 服务端 | `mcd-mcp v1.0.0`，协议 `2025-06-18` |
+| 工具数 | **35**（官方文档列的是 30） |
+| 门店查询 | `query-nearby-stores` 用 `beType` + `searchType`，**不接受地址字符串** |
+| 门店菜单 | 单店返回 **107 个餐品 / 15 个分类** |
+| 营养数据 | `list-nutrition-foods` 返回 **160 项** |
+| 优惠券 | 真实券是**品类级兑换券**，结构里没有 `discount` / `minSpend` |
+
+真实调用推翻了本项目最初的三处想当然，均已修正：
+
+**① 供应时段是门店级的，而且和大家以为的不一样。**
+实测某门店的真实早餐窗口是 **07:14–10:15**，而项目原先硬编码的估算表写的是 05:00–10:30 ——
+差了近两小时；不同门店还不一致（另一家是 06:44 开始）。
+现在改为**优先使用 MCP 返回的门店真实时段**，拿不到才回退估算表，并在输出中标注来源。
+
+**② 时段之间有真空档。**
+早餐 10:15 结束、午餐 10:44 才开始，中间 29 分钟**什么都买不到**。
+为此新增 `nextWindowAfter()`，落到空档时直接告诉用户「下一时段 10:44 开始」。
+
+**③ 优惠券不是"满 X 减 Y"。**
+真实券形如 `{"title":"麦旋风任选","products":[{"productCode":"9900014239","productName":"麦旋风任选1"}]}` ——
+是**品类级兑换券**，且其 `productCode` 并不在门店菜单里。
+现在精确编码匹配才抵扣，品类关键词只用于提示。**猜错品类会导致报价错误，比不抵扣更糟。**
+
 ## 架构
 
 ![架构](assets/architecture.svg)
@@ -126,9 +156,10 @@ MCD_MCP_TOKEN=你的Token node scripts/mcp-smoke.mjs
 
 ## 使用示例
 
-> **关于示例数据**：以下输出均由仓库内脚本**真实运行**产生，输入为 `examples/payload-*.json`
-> 或内置演示数据，用于验证决策逻辑本身。接入真实 MCP Token 后，门店、菜单、优惠券与价格
-> 由麦当劳 MCP 实时返回，**决策层逻辑完全一致**。
+> **关于示例数据**：示例一至三的输出由仓库内脚本**真实运行**产生，输入为 `examples/payload-*.json`
+> 或内置演示数据，用于验证决策逻辑本身。
+> **示例四使用完整的真实 MCP 数据**（真实门店、真实门店时段、真实菜单编码与价格、真实热量、真实券），
+> 见 [`examples/payload-real-store.json`](./examples/payload-real-store.json)。
 
 ### 示例一 · 早八通勤抢早餐
 
@@ -184,6 +215,33 @@ node scripts/coupon-deadline-rescue.mjs --demo
 
 见 [`examples/demo-3-boundary.md`](./examples/demo-3-boundary.md)。
 
+### 示例四 · 全真实数据（真实门店时段驱动决策）
+
+输入取自真实 MCP 调用，运行 `node scripts/plan-commute-order.mjs --input examples/payload-real-store.json`：
+
+```
+=== 麦麦通勤点单官 · 通勤点单方案 ===
+出发时间  2026-10-09 21:05
+预计到达  2026-10-09 21:30
+到达时段  夜市（供应 17:14–21:45，到达后剩余 15 分钟 ⚠ 临界）[门店实时时段]
+目标门店  麦当劳上海世纪汇广场餐厅（距目的地约 72 米）
+
+提示：
+  · 时段取自门店「麦当劳上海世纪汇广场餐厅」的真实可预约时段（2026-10-09），非估算值。
+  · 到达后距「夜市」时段结束仅剩 15 分钟，建议提前下单预约。
+
+候选方案（3 个）：
+  [1] ★ 推荐　评分 74.2　[最省 · 最快取餐]
+      组合：麦香鸡　¥17.00　369 kcal　约 9 分钟
+  [2] 评分 66.1　[最快取餐]
+      组合：圆筒冰淇淋 + 麦香鸡　¥22.00　462 kcal　约 9 分钟
+  [3] 评分 58　[最低热量]
+      组合：麦香鱼　¥22.50　325 kcal　约 10 分钟
+```
+
+注意 `[门店实时时段]` 与 `17:14–21:45` —— 这两个数字是 **MCP 真实返回的门店时段**，
+不是项目内的估算表。检测到只剩 15 分钟时自动打出临界告警。
+
 ## 渠道决策：自取还是外送
 
 先说清楚一件事，免得误解：**在同一门店、同一菜单、同一张券的前提下，外送必然比自取贵，差额恰好等于配送费。**
@@ -233,7 +291,7 @@ node scripts/plan-commute-order.mjs --demo --json   # 机器可读输出
 
 ## 测试
 
-**53 个单元测试，零依赖，离线可跑**，覆盖时段引擎、到达时间推算、券择优、四维评分与渠道决策五组核心逻辑：
+**82 个单元测试，零依赖，离线可跑**，覆盖时段引擎、真实门店时段解析、到达时间推算、券择优（含真实兑换券结构）、四维评分、渠道决策与类别约束七组核心逻辑：
 
 ```bash
 npm test
@@ -376,17 +434,23 @@ mcd-commute-butler/
 ├── workbuddy.md                      # WorkBuddy 开发对话上下文
 ├── reference/
 │   ├── time-window-rules.md          # 供应时段规则与临界点处理
+│   ├── mcp-tool-schemas.md           # 35 个 Tool 的参数表（从服务端实测导出）
 │   ├── tool-playbook.md              # 各场景 Tool 调用序列
 │   └── edge-cases.md                 # 异常与降级策略
 ├── scripts/
 │   ├── plan-commute-order.mjs        # 通勤方案计算引擎 + 渠道决策（零依赖）
 │   ├── coupon-deadline-rescue.mjs    # 券与积分到期分档
-│   └── mcp-smoke.mjs                 # MCP 连通性自检（需 Token）
+│   └── mcp-smoke.mjs                 # MCP 连通性自检与 schema 导出（需 Token）
 ├── tests/
-│   └── plan-commute-order.test.mjs   # 53 个单元测试
+│   └── plan-commute-order.test.mjs   # 82 个单元测试
+├── docs/
+│   └── real-mcp-verification.md      # 真实 MCP 调用记录与四处偏差修正
 ├── assets/
 │   └── architecture.svg              # 架构图
 └── examples/
+    ├── payload-real-store.json       # 全真实数据（门店/时段/菜单/价格/热量/券）
+    ├── payload-boundary.json         # 时段边界场景输入
+    ├── payload-delivery.json         # 外送场景输入
     ├── demo-1-morning-commute.md
     ├── demo-2-rainy-day-delivery.md
     └── demo-3-boundary.md

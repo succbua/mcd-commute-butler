@@ -1,0 +1,74 @@
+{
+  "_note": "本文件全部数据来自麦当劳 MCP 实测返回，未做任何编造。来源见 docs/real-mcp-verification.md：门店与时段来自 query-nearby-stores，餐品编码与价格来自 query-meals，热量来自 list-nutrition-foods，券来自 query-store-coupons。采集时间 2026-10-09 18:22（北京时间）。",
+  "now": "2026-10-09T21:00:00+08:00",
+  "departTime": "2026-10-09T21:05:00+08:00",
+  "travelMinutes": 25,
+  "budget": 45,
+  "maxCalories": 1200,
+  "preference": "",
+  "requireCategory": "主食",
+  "fulfillment": "pickup",
+  "queueBaseMinutes": 4,
+  "stores": [
+    {
+      "storeCode": "1450253",
+      "name": "麦当劳上海世纪汇广场餐厅",
+      "address": "世纪大道1192号世纪汇广场LG1层 A01商铺",
+      "distanceMeters": 72,
+      "open": true,
+      "businessStartTime": "06:30",
+      "businessEndTime": "22:00",
+      "reservation": true,
+      "reservationTimeOptions": [
+        {
+          "date": "2026-10-09",
+          "today": true,
+          "reservationOptionText": "夜市(17:14至21:45)"
+        },
+        {
+          "date": "2026-10-10",
+          "today": false,
+          "reservationOptionText": "早餐(07:14至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)"
+        }
+      ]
+    }
+  ],
+  "meals": [
+    { "code": "515837", "name": "圆筒冰淇淋", "category": "甜品", "price": 5, "calories": 93, "prepMinutes": 1 },
+    { "code": "6102", "name": "苹果片", "category": "小食", "price": 7, "calories": 32, "prepMinutes": 1 },
+    { "code": "3757", "name": "纯悦", "category": "饮品", "price": 7.5, "calories": 0, "prepMinutes": 1 },
+    { "code": "3505", "name": "锡兰红茶", "category": "饮品", "price": 11.5, "calories": 2, "prepMinutes": 1 },
+    { "code": "2430", "name": "【美汁源】“黄金橙橙”", "category": "饮品", "price": 13, "calories": 165, "prepMinutes": 1 },
+    { "code": "507389", "name": "浓缩咖啡", "category": "饮品", "price": 15, "calories": 13, "prepMinutes": 2 },
+    { "code": "1450", "name": "麦香鸡", "category": "主食", "price": 17, "calories": 369, "prepMinutes": 5 },
+    { "code": "1440", "name": "麦辣鸡腿汉堡", "category": "主食", "price": 22.5, "calories": 485, "prepMinutes": 6 },
+    { "code": "1600", "name": "麦香鱼", "category": "主食", "price": 22.5, "calories": 325, "prepMinutes": 6 },
+    { "code": "1120", "name": "双层吉士汉堡", "category": "主食", "price": 23, "calories": 429, "prepMinutes": 6 },
+    { "code": "1406", "name": "板烧鸡腿堡", "category": "主食", "price": 23.5, "calories": 391, "prepMinutes": 6 },
+    { "code": "9900003586", "name": "双层深海鳕鱼堡", "category": "主食", "price": 24, "calories": 485, "prepMinutes": 6 },
+    { "code": "1100", "name": "巨无霸", "category": "主食", "price": 25.5, "calories": 513, "prepMinutes": 6 },
+    { "code": "4648", "name": "不素之霸双层牛堡", "category": "主食", "price": 26.5, "calories": 493, "prepMinutes": 7 },
+    { "code": "511782", "name": "芝士安格斯厚牛堡", "category": "主食", "price": 31.5, "calories": 696, "prepMinutes": 8 },
+    { "code": "511781", "name": "培根安格斯厚牛堡", "category": "主食", "price": 34.5, "calories": 707, "prepMinutes": 8 }
+  ],
+  "coupons": [
+    {
+      "title": "麦旋风任选",
+      "couponId": "71F939A874735C2495517B8B24323CFB",
+      "couponCode": "MCD6F2Y2090L00Y190V76",
+      "tradeDateTime": "2026-10-05 10:30:00-2026-10-09 23:59:59",
+      "products": [
+        { "productCode": "9900014239", "productName": "麦旋风任选1" }
+      ]
+    },
+    {
+      "title": "薯薯任选",
+      "couponId": "E86377A0349D730EF7C27EBBE7B4C0FE",
+      "couponCode": "MCD6F6Y0002994V01Y02N",
+      "tradeDateTime": "2026-10-05 10:30:00-2026-10-09 23:59:59",
+      "products": [
+        { "productCode": "9900016370", "productName": "薯薯任选" }
+      ]
+    }
+  ]
+}

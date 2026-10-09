@@ -25,9 +25,14 @@ const MS_PER_DAY = 86400000;
 const BEIJING_OFFSET_MINUTES = 480;
 
 /**
- * 供应时段定义（北京时间）。
- * 注：各门店实际供应时间可能不同，接入 MCP 时应以 query-meals 返回的
- * 门店实时菜单为准，本表仅用于「到达时是否赶得上」的前置判断。
+ * 供应时段定义（北京时间）—— **兜底估算表**。
+ *
+ * ⚠ 这是估算，不是事实。实测麦当劳 MCP 的 `query-nearby-stores` 会在
+ * `reservationTimeOptions[].reservationOptionText` 中返回**门店级的真实可预约时段**，
+ * 同一时刻不同门店的早餐开始时间并不相同（实测有 06:44、07:14 等）。
+ *
+ * 因此优先使用 `resolveStoreWindows()` 从 MCP 返回结果解析出的真实时段；
+ * 本表仅在拿不到门店时段数据时兜底。解析出的时段会覆盖本表。
  */
 export const MEAL_WINDOWS = [
   { key: 'breakfast', label: '早餐', start: '05:00', end: '10:30' },
@@ -36,6 +41,64 @@ export const MEAL_WINDOWS = [
   { key: 'dinner', label: '晚餐', start: '17:00', end: '22:00' },
   { key: 'late-night', label: '夜宵', start: '22:00', end: '05:00' },
 ];
+
+/** 门店实际时段名 → 本项目的时段 key */
+const WINDOW_LABEL_TO_KEY = {
+  早餐: 'breakfast',
+  午餐: 'lunch',
+  正餐: 'lunch',
+  下午茶: 'afternoon',
+  晚餐: 'dinner',
+  夜市: 'dinner',
+  宵夜: 'late-night',
+  夜宵: 'late-night',
+  breakfast: 'breakfast',
+  lunch: 'lunch',
+  afternoon: 'afternoon',
+  dinner: 'dinner',
+};
+
+/**
+ * 解析门店返回的可预约时段文本。
+ *
+ * 输入示例：
+ *   "早餐(07:14至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)"
+ * 输出示例：
+ *   [{ key:'breakfast', label:'早餐', start:'07:14', end:'10:15' }, ...]
+ */
+export function parseReservationOptions(text) {
+  if (!text) return [];
+  const out = [];
+  const re = /([^（()），,]+)[（(](\d{1,2}:\d{2})\s*至\s*(\d{1,2}:\d{2})[)）]/g;
+  let m;
+  while ((m = re.exec(String(text))) !== null) {
+    const label = m[1].trim();
+    out.push({
+      key: WINDOW_LABEL_TO_KEY[label] || label,
+      label,
+      start: m[2],
+      end: m[3],
+      source: 'store',
+    });
+  }
+  return out;
+}
+
+/**
+ * 从 `query-nearby-stores` 返回的门店对象中取出指定日期的真实可售时段。
+ * 找不到对应日期时回退到 `today` 标记的条目，再回退到第一条。
+ * 拿不到任何时段数据时返回 null（由调用方回退到 MEAL_WINDOWS）。
+ */
+export function resolveStoreWindows(store, dateStr) {
+  const options = store?.reservationTimeOptions;
+  if (!Array.isArray(options) || !options.length) return null;
+  const hit =
+    (dateStr && options.find((o) => o.date === dateStr)) ||
+    options.find((o) => o.today) ||
+    options[0];
+  const parsed = parseReservationOptions(hit?.reservationOptionText);
+  return parsed.length ? parsed : null;
+}
 
 /** 券到期紧迫度分档（剩余天数） */
 export const URGENCY_TIERS = [
@@ -112,10 +175,14 @@ function isWithin(minute, startMin, endMin) {
 /**
  * 判定某一时刻所处的供应时段。
  * 返回距该时段结束还剩多少分钟 —— 这是通勤场景最关键的决策变量。
+ *
+ * @param {number} epochMs 目标时刻（epoch 毫秒）
+ * @param {Array}  windows 时段表；默认用兜底的 MEAL_WINDOWS，
+ *                         接入 MCP 后应传入 resolveStoreWindows() 解析出的门店真实时段
  */
-export function windowAt(epochMs) {
+export function windowAt(epochMs, windows = MEAL_WINDOWS) {
   const minute = minuteOfDay(epochMs);
-  for (const w of MEAL_WINDOWS) {
+  for (const w of windows) {
     const startMin = hmToMinutes(w.start);
     const endMin = hmToMinutes(w.end);
     if (!isWithin(minute, startMin, endMin)) continue;
@@ -130,6 +197,8 @@ export function windowAt(epochMs) {
       minutesUntilClose: untilClose,
       /** 距时段结束不足 30 分钟，视为「临界状态」，需要提前决策 */
       isCritical: untilClose <= 30,
+      /** 该时段是否来自门店真实数据（而非兜底估算表） */
+      fromStore: w.source === 'store',
     };
   }
   return null;
@@ -142,6 +211,26 @@ export function resolveArrival(departIso, travelMinutes) {
     throw new Error(`通勤时长无效: ${travelMinutes}`);
   }
   return toEpoch(departIso) + travel * MS_PER_MINUTE;
+}
+
+/**
+ * 找到给定时刻之后最近的一个供应时段。
+ *
+ * 真实门店时段之间存在**空档**。实测某门店为：
+ *   早餐 07:14–10:15，午餐 10:44–14:15 —— 中间 10:15–10:44 买不到正餐。
+ * 落到空档里时，告诉用户「下一时段几点开始」比笼统地说「不可售」有用得多。
+ */
+export function nextWindowAfter(epochMs, windows = MEAL_WINDOWS) {
+  const minute = minuteOfDay(epochMs);
+  let best = null;
+  for (const w of windows) {
+    const startMin = hmToMinutes(w.start);
+    const delta = (startMin - minute + 1440) % 1440;
+    if (!best || delta < best.minutesUntil) {
+      best = { ...w, startMin, minutesUntil: delta };
+    }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------- 券工具
@@ -157,8 +246,147 @@ export function urgencyOf(coupon, nowEpochMs) {
   return { tier: hit.tier, label: hit.label, bonus: hit.bonus, days };
 }
 
-/** 计算券在当前小计金额下的实际抵扣额；不满足门槛返回 0 */
-export function effectiveDiscount(coupon, subtotal) {
+/**
+ * 解析 MCP 返回的券有效期字段 `tradeDateTime`。
+ *
+ * 实测格式：`"2026-10-05 10:30:00-2026-10-09 23:59:59"`
+ * 返回 { start, end, expireAt }，其中 expireAt 为 ISO 8601（按北京时间）。
+ */
+export function parseCouponPeriod(tradeDateTime) {
+  if (!tradeDateTime) return { start: null, end: null, expireAt: null };
+  const parts = String(tradeDateTime).split('-');
+  if (parts.length < 6) return { start: null, end: null, expireAt: null };
+  // 形如 YYYY-MM-DD HH:mm:ss-YYYY-MM-DD HH:mm:ss，中间的 "-" 也是分隔符
+  const text = String(tradeDateTime);
+  const m = /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*-\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/.exec(text);
+  if (!m) return { start: null, end: null, expireAt: null };
+  const toIso = (s) => `${s.replace(' ', 'T')}+08:00`;
+  return { start: toIso(m[1]), end: toIso(m[2]), expireAt: toIso(m[2]) };
+}
+
+/**
+ * 从券的商品名推导「品类关键词」。
+ *
+ * 实测发现：麦当劳的券多为**品类级「任选」券** ——
+ * `productName` 形如「麦旋风任选1」「薯薯任选」，而 `productCode`（如 9900014239）
+ * 并**不**出现在门店菜单里。也就是说券适用于某一类商品，而非某个确定 SKU。
+ *
+ * 这里只做保守推导，用于给用户提示；**绝不用它自动抵扣金额** ——
+ * 猜错品类会导致报价错误，比不抵扣更糟。
+ */
+export function deriveVoucherCategory(productNames) {
+  for (const raw of productNames || []) {
+    const name = String(raw || '').trim();
+    if (!name) continue;
+    const stripped = name.replace(/任选\s*\d*$/, '').replace(/\d+$/, '').trim();
+    if (stripped && stripped !== name) return stripped;
+    return name;
+  }
+  return null;
+}
+
+/**
+ * 找出「编码没匹配上、但品类关键词可能匹配」的兑换券，供 Skill 层向用户确认。
+ * 结果**不参与计价**，只作提示。
+ */
+export function findVoucherHints(coupons, items = []) {
+  const hits = [];
+  for (const coupon of coupons || []) {
+    const category = coupon.voucherCategory || deriveVoucherCategory(coupon.productNames);
+    if (!category) continue;
+
+    const codes = coupon.applicableProductCodes || [];
+    const exact = items.some((i) => codes.includes(String(i.code)));
+    if (exact) continue; // 已精确匹配，无需提示
+
+    const candidates = items
+      .filter((i) => String(i.name || '').includes(category))
+      .map((i) => i.name);
+    if (candidates.length) {
+      hits.push({
+        couponId: coupon.couponId,
+        title: coupon.title,
+        category,
+        candidates,
+      });
+    }
+  }
+  return hits;
+}
+
+/**
+ * 把麦当劳 MCP 返回的原始券对象归一化为本模块的券模型。
+ *
+ * ⚠ 实测麦当劳的券**多為兑换券**（免费兑换指定商品），而非「满 X 减 Y」。
+ * 原始结构示例：
+ *   { title, couponId, couponCode, tradeDateTime,
+ *     products: [{ productCode: '9900014239', productName: '麦旋风任选1' }] }
+ *
+ * 归一化后：
+ *   - 兑换券 → `applicableProductCodes`，抵扣额 = 组合中命中商品的售价之和
+ *   - 满减券 → 保留 `discount` / `minSpend` / `discountRate`
+ */
+export function normalizeCoupon(raw) {
+  const period = parseCouponPeriod(raw.tradeDateTime);
+  const productCodes = (raw.products || [])
+    .map((p) => p?.productCode)
+    .filter(Boolean)
+    .map(String);
+  const productNames = (raw.products || []).map((p) => p?.productName).filter(Boolean);
+
+  const base = {
+    couponId: raw.couponId,
+    couponCode: raw.couponCode,
+    title: raw.title,
+    expireAt: raw.expireAt || period.expireAt,
+    validFrom: period.start,
+  };
+
+  if (productCodes.length) {
+    return {
+      ...base,
+      type: 'voucher',
+      applicableProductCodes: productCodes,
+      productNames,
+      /** 仅用于提示，不参与自动计价 */
+      voucherCategory: deriveVoucherCategory(productNames),
+    };
+  }
+
+  return {
+    ...base,
+    type: raw.discount != null || raw.discountRate != null ? 'amount' : 'unknown',
+    discount: raw.discount != null ? Number(raw.discount) : undefined,
+    minSpend: raw.minSpend != null ? Number(raw.minSpend) : 0,
+    discountRate: raw.discountRate,
+    discountCap: raw.discountCap,
+  };
+}
+
+/**
+ * 计算券在当前订单下的实际抵扣额。
+ *
+ * - 兑换券：抵扣额 = 组合中命中适用商品的售价之和（免费兑换）
+ * - 满减券：需满足门槛，返回固定抵扣额
+ * - 折扣券：subtotal × 折扣率，受封顶约束
+ *
+ * @param {object} coupon 券（原始或 normalizeCoupon 归一化后均可）
+ * @param {number} subtotal 商品小计
+ * @param {Array}  items    当前组合的餐品列表（兑换券需要）
+ */
+export function effectiveDiscount(coupon, subtotal, items = []) {
+  const codes = coupon.applicableProductCodes || (coupon.products || [])
+    .map((p) => p?.productCode)
+    .filter(Boolean)
+    .map(String);
+
+  if (codes.length) {
+    const set = new Set(codes);
+    return items
+      .filter((i) => set.has(String(i.code)))
+      .reduce((sum, i) => sum + Number(i.price || 0), 0);
+  }
+
   const minSpend = Number(coupon.minSpend || 0);
   if (subtotal < minSpend) return 0;
   if (coupon.discount != null) return Number(coupon.discount);
@@ -170,10 +398,10 @@ export function effectiveDiscount(coupon, subtotal) {
 }
 
 /** 为一个小计金额挑选最优券：应付最低优先，同价取更早到期的 */
-export function pickBestCoupon(coupons, subtotal, nowEpochMs) {
+export function pickBestCoupon(coupons, subtotal, nowEpochMs, items = []) {
   let best = null;
   for (const coupon of coupons || []) {
-    const discount = effectiveDiscount(coupon, subtotal);
+    const discount = effectiveDiscount(coupon, subtotal, items);
     if (discount <= 0) continue;
     const urgency = urgencyOf(coupon, nowEpochMs);
     const payable = subtotal - discount;
@@ -248,6 +476,8 @@ export function buildPlans(input) {
     queueBaseMinutes = 4,
     deliveryFee = 0,
     deliveryEtaMinutes = 0,
+    /** 组合必须包含的餐品类别（如「主食」），避免推荐出一份零食当正餐 */
+    requireCategory = null,
     weights = DEFAULT_WEIGHTS,
   } = input;
 
@@ -258,7 +488,6 @@ export function buildPlans(input) {
   const departEpoch = toEpoch(departTime);
   const nowEpoch = now ? toEpoch(now) : departEpoch;
   const arrivalEpoch = resolveArrival(departTime, travelMinutes);
-  const arrivalWindow = windowAt(arrivalEpoch);
   const notes = [];
 
   // 1) 门店：优先选距离最近的营业门店（外送场景由 MCP 侧给出门店列表）
@@ -268,7 +497,19 @@ export function buildPlans(input) {
   }
   const store = openStores.slice().sort((a, b) => (a.distanceMeters ?? 1e9) - (b.distanceMeters ?? 1e9))[0] || null;
 
-  // 2) 时段可行性：到达时已过供应时段的餐品直接剔除
+  // 2) 时段表：优先使用门店返回的真实可预约时段，拿不到才回退到兜底估算表
+  const arrivalDateStr = formatBeijing(arrivalEpoch).slice(0, 10);
+  const storeWindows = resolveStoreWindows(store, arrivalDateStr);
+  const activeWindows = storeWindows || MEAL_WINDOWS;
+  if (storeWindows) {
+    notes.push(
+      `时段取自门店「${store.name}」的真实可预约时段（${arrivalDateStr}），非估算值。`,
+    );
+  }
+  const arrivalWindow = windowAt(arrivalEpoch, activeWindows);
+  const windowsSource = storeWindows ? 'store' : 'fallback';
+
+  // 3) 时段可行性：到达时已过供应时段的餐品直接剔除
   let windowFiltered = meals;
   if (arrivalWindow) {
     const allowed = meals.filter((m) => !m.windows || m.windows.includes(arrivalWindow.key));
@@ -281,7 +522,15 @@ export function buildPlans(input) {
     }
     windowFiltered = allowed;
   } else {
-    notes.push('到达时间不在任何已知供应时段内，请以门店实际营业时间为准。');
+    const next = nextWindowAfter(arrivalEpoch, activeWindows);
+    if (next) {
+      notes.push(
+        `到达时落在供应时段的空档期，最近的下一时段「${next.label}」将于 ${next.start} 开始` +
+          `（约 ${next.minutesUntil} 分钟后）。建议按该时段预约，或调整出发时间。`,
+      );
+    } else {
+      notes.push('到达时间不在任何已知供应时段内，请以门店实际营业时间为准。');
+    }
     windowFiltered = meals;
   }
 
@@ -304,6 +553,7 @@ export function buildPlans(input) {
       departure: departEpoch,
       arrival: arrivalEpoch,
       arrivalWindow,
+      windowsSource,
       notes: [...notes, '当前时段没有任何可售餐品，无法生成方案。'],
       plans: [],
     };
@@ -314,7 +564,9 @@ export function buildPlans(input) {
   for (const combo of enumerateCombos(pool)) {
     if (combo.subtotal > budget) continue;
     if (combo.calories > maxCalories) continue;
-    const best = pickBestCoupon(coupons, combo.subtotal, nowEpoch);
+    // 类别硬约束：例如通勤正餐必须含一份主食，否则最低价零食会永远胜出
+    if (requireCategory && !combo.items.some((i) => i.category === requireCategory)) continue;
+    const best = pickBestCoupon(coupons, combo.subtotal, nowEpoch, combo.items);
     const discount = best ? best.discount : 0;
     const payable = combo.subtotal - discount + extraFee;
     const waitMinutes = Number(queueBaseMinutes) + combo.prepMinutes + extraEta;
@@ -335,7 +587,13 @@ export function buildPlans(input) {
       departure: departEpoch,
       arrival: arrivalEpoch,
       arrivalWindow,
-      notes: [...notes, `在预算 ¥${budget} 与热量上限 ${maxCalories} kcal 内没有可用组合。`],
+      windowsSource,
+      notes: [
+        ...notes,
+        `在预算 ¥${budget} 与热量上限 ${maxCalories} kcal 内没有可用组合` +
+          (requireCategory ? `（且要求包含「${requireCategory}」类餐品）` : '') +
+          '。',
+      ],
       plans: [],
     };
   }
@@ -405,12 +663,22 @@ export function buildPlans(input) {
     })
     .sort((a, b) => b.score - a.score);
 
+  // 7) 兑换券的品类级提示：编码未命中但品类关键词可能有对应商品。
+  //    只提示、不自动抵扣 —— 猜错品类会导致报价错误。
+  for (const hint of findVoucherHints(coupons, pool)) {
+    notes.push(
+      `券「${hint.title}」是「${hint.category}」品类任选券，其商品编码未出现在当前菜单中；` +
+        `可能适用的在售商品：${hint.candidates.join('、')}。该券未参与自动计价，需确认后再使用。`,
+    );
+  }
+
   return {
     store,
     fulfillment,
     departure: departEpoch,
     arrival: arrivalEpoch,
     arrivalWindow,
+    windowsSource,
     budget,
     notes,
     plans,
@@ -426,10 +694,11 @@ export function renderReport(result) {
   out.push(`预计到达  ${formatBeijing(result.arrival)}`);
   if (result.arrivalWindow) {
     const w = result.arrivalWindow;
+    const src = result.windowsSource === 'store' ? '门店实时时段' : '估算时段';
     out.push(
       `到达时段  ${w.label}（供应 ${w.start}–${w.end}，到达后剩余 ${w.minutesUntilClose} 分钟${
         w.isCritical ? ' ⚠ 临界' : ''
-      }）`,
+      }）[${src}]`,
     );
   } else {
     out.push('到达时段  不在已知供应时段内');

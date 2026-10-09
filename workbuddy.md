@@ -98,6 +98,33 @@
    把「确实接通了麦当劳 MCP」变成一条可复现的命令。
 4. **架构图**：新增 `assets/architecture.svg`，呈现「事实层 / 决策层 / 副作用层」三层分离。
 
+### 阶段 8 · 真实 MCP 链路验证与四处偏差修正
+
+拿到 MCP Token 后，WorkBuddy 编写 `scripts/mcp-smoke.mjs` 并按 MCP Streamable HTTP 协议
+真实握手（`initialize` → `notifications/initialized` → `tools/list` → `tools/call`），
+成功连通 `mcd-mcp v1.0.0`，随后依次真实调用了
+`now-time-info`、`query-nearby-stores`、`query-meals`、`list-nutrition-foods`、`query-store-coupons`。
+
+真实调用推翻了本项目最初的三处「照文档想当然」，均已修正代码：
+
+1. **工具数 30 → 35**，多出 `query-promotions`、`query-survey-coupon` 等。
+2. **`query-nearby-stores` 不接受地址字符串**，实测传 `address` 返回 400「缺少参数」；
+   正确参数为 `beType`（1 到店 / 5 得来速）+ `searchType` + `city` + `keyword`。
+3. **供应时段是门店级的真实数据**，实测为 07:14–10:15，而项目硬编码的估算表写的是 05:00–10:30，
+   差了近两小时；不同门店还不一致。据此新增 `resolveStoreWindows()` 与
+   `parseReservationOptions()`，改为**优先采用 MCP 返回的门店真实时段**。
+4. **真实优惠券是品类级兑换券**，结构里没有 `discount` / `minSpend`，
+   且其 `productCode` 不在门店菜单中。据此新增 `voucher` 券类型、
+   `parseCouponPeriod()`、`normalizeCoupon()`，并确立原则：
+   **精确编码匹配才抵扣，品类关键词只提示不自动计价。**
+
+同批次还发现并修复了一个产品层面的缺陷：
+由于评分采用集合内 min-max 归一化，最低价商品永远胜出，真实数据下推荐结果
+退化成了「一份 ¥5 圆筒冰淇淋当晚餐」。为此新增 `requireCategory` 类别硬约束。
+
+最终新增 `reference/mcp-tool-schemas.md`（35 个工具的参数表，从服务端实测导出）
+与 `docs/real-mcp-verification.md`（完整调用记录），单元测试从 53 增至 82。
+
 ## 三、WorkBuddy 在本项目中的具体作用
 
 | 环节 | WorkBuddy 承担的工作 |
